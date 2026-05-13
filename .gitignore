@@ -1,0 +1,13 @@
+bin/
+obj/
+out/
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/
+*.log
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
