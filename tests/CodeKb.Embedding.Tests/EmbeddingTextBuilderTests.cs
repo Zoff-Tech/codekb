@@ -87,4 +87,41 @@ public class EmbeddingTextBuilderTests
         var text = EmbeddingTextBuilder.Build(rec);
         text.Should().NotContain("Code Snippet:");
     }
+
+    [Fact]
+    public void Build_IncludesTokensLine_WithSplitIdentifiers()
+    {
+        var rec = MakeRecord(d =>
+        {
+            d["ClassName"] = "PrePaidAccount";
+            d["MethodName"] = "ProcessPaymentAsync";
+            d["FeatureFlagName"] = "enable-new-workflow";
+        });
+        var text = EmbeddingTextBuilder.Build(rec);
+        text.Should().Contain("Tokens:");
+        text.Should().Contain("Pre");
+        text.Should().Contain("Paid");
+        text.Should().Contain("Account");
+        text.Should().Contain("Process");
+        text.Should().Contain("Payment");
+        text.Should().Contain("Async");
+        text.Should().Contain("enable");
+        text.Should().Contain("workflow");
+    }
+
+    [Fact]
+    public void Build_TokensLine_OmittedWhenNoIdentifierFields()
+    {
+        var rec = MakeRecord(d =>
+        {
+            d["Namespace"] = null;
+            d["ClassName"] = null;
+            d["MethodName"] = null;
+            d["SymbolName"] = null;
+            d["FeatureFlagName"] = null;
+            d["FilePath"] = "";
+        });
+        var text = EmbeddingTextBuilder.Build(rec);
+        text.Should().NotContain("Tokens:");
+    }
 }

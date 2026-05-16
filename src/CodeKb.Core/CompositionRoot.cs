@@ -5,6 +5,7 @@ using CodeKb.Embedding;
 using CodeKb.Scanner.Roslyn;
 using CodeKb.Scanner.Roslyn.Classification;
 using CodeKb.Scanner.Roslyn.Detection;
+using CodeKb.Scanner.Roslyn.Projects;
 using CodeKb.Scanner.Roslyn.Redaction;
 using CodeKb.Scanner.Roslyn.Syntax;
 using CodeKb.Storage.Postgres;
@@ -26,6 +27,7 @@ public static class CompositionRoot
         services.AddSingleton<IFeatureFlagDetector, FeatureFlagDetector>();
         services.AddSingleton<ISearchTermMatcher, SearchTermMatcher>();
         services.AddSingleton<IConfigFileScanner, ConfigFileScanner>();
+        services.AddSingleton<IProjectScanner, ProjectScanner>();
         services.AddSingleton<IRedactor, Redactor>();
         services.AddSingleton<IRoslynScanner, RoslynScanner>();
         services.AddSingleton<IRepositoryLoader>(_ => new RepositoryLoader());

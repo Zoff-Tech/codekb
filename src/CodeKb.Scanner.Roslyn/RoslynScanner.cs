@@ -3,6 +3,7 @@ using System.Text.Json;
 using CodeKb.Contracts;
 using CodeKb.Scanner.Roslyn.Classification;
 using CodeKb.Scanner.Roslyn.Detection;
+using CodeKb.Scanner.Roslyn.Projects;
 using CodeKb.Scanner.Roslyn.Redaction;
 using CodeKb.Scanner.Roslyn.Snippets;
 using CodeKb.Scanner.Roslyn.Syntax;
@@ -42,6 +43,7 @@ public sealed class RoslynScanner : IRoslynScanner
     private readonly ISearchTermMatcher _searchTermMatcher;
     private readonly IConfigFileScanner _configScanner;
     private readonly IRedactor _redactor;
+    private readonly IProjectScanner _projectScanner;
 
     public ScanCounters Counters { get; } = new();
 
@@ -51,7 +53,8 @@ public sealed class RoslynScanner : IRoslynScanner
         IFeatureFlagDetector flagDetector,
         ISearchTermMatcher searchTermMatcher,
         IConfigFileScanner configScanner,
-        IRedactor redactor)
+        IRedactor redactor,
+        IProjectScanner? projectScanner = null)
     {
         _classifier = classifier;
         _extractor = extractor;
@@ -59,6 +62,7 @@ public sealed class RoslynScanner : IRoslynScanner
         _searchTermMatcher = searchTermMatcher;
         _configScanner = configScanner;
         _redactor = redactor;
+        _projectScanner = projectScanner ?? new ProjectScanner();
     }
 
     public async IAsyncEnumerable<CodeRecord> ScanAsync(LoadedRepository repo, ScanContext context, ScanOptions options, [EnumeratorCancellation] CancellationToken ct)
@@ -86,6 +90,28 @@ public sealed class RoslynScanner : IRoslynScanner
             Interlocked.Increment(ref Counters.FilesScanned);
 
             if (kind == FileKind.Generated) continue;
+
+            if (relPath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                var rec = HandleProjectFile(relPath, content, context);
+                if (rec is not null)
+                {
+                    Interlocked.Increment(ref Counters.RecordsCreated);
+                    yield return rec;
+                }
+                continue;
+            }
+            if (relPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+            {
+                var rec = HandleSolutionFile(relPath, content, context);
+                if (rec is not null)
+                {
+                    Interlocked.Increment(ref Counters.RecordsCreated);
+                    yield return rec;
+                }
+                continue;
+            }
+
             if (kind == FileKind.Configuration)
             {
                 foreach (var rec in HandleConfigFile(relPath, content, context, options))
@@ -140,6 +166,8 @@ public sealed class RoslynScanner : IRoslynScanner
                     loc = extraction.LineCount,
                     top_level_types = extraction.TopLevelTypes,
                     uses_unsafe = content.Contains("unsafe", StringComparison.Ordinal),
+                    using_directives = extraction.UsingDirectives,
+                    external_types = extraction.ExternalTypes,
                 }),
                 IsTestCode = isTest,
                 IsGeneratedCode = false,
@@ -376,6 +404,109 @@ public sealed class RoslynScanner : IRoslynScanner
                 }),
             };
         }
+    }
+
+    internal CodeRecord? HandleProjectFile(string relPath, string content, ScanContext context)
+    {
+        var info = _projectScanner.ParseProject(relPath, content);
+        if (info is null) return null;
+        var snippet = BuildProjectSnippet(info);
+        var redacted = _redactor.Redact(snippet);
+        if (redacted.Status == RedactionStatus.Failed)
+        {
+            Interlocked.Increment(ref Counters.RecordsRedactionFailed);
+            return null;
+        }
+        return new CodeRecord
+        {
+            RepositoryId = context.RepositoryId,
+            ScanJobId = context.ScanJobId,
+            RepositoryName = context.RepositoryName,
+            Branch = context.Branch,
+            CommitSha = context.CommitSha,
+            FilePath = relPath,
+            LineStart = 1,
+            LineEnd = Math.Max(1, content.Count(c => c == '\n') + 1),
+            RecordType = RecordType.FileSummary,
+            SymbolName = info.Name,
+            SymbolKind = SymbolKind.File,
+            Namespace = info.RootNamespace,
+            Summary = $"Project {info.Name} ({string.Join(", ", info.TargetFrameworks)}) — {info.PackageReferences.Count} package ref(s), {info.ProjectReferences.Count} project ref(s)",
+            CodeSnippet = redacted.Text,
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                kind = "project",
+                sdk = info.Sdk,
+                target_frameworks = info.TargetFrameworks,
+                root_namespace = info.RootNamespace,
+                assembly_name = info.AssemblyName,
+                lang_version = info.LangVersion,
+                nullable = info.NullableEnabled,
+                implicit_usings = info.ImplicitUsings,
+                package_references = info.PackageReferences.Select(p => new { name = p.Name, version = p.Version }).ToList(),
+                project_references = info.ProjectReferences,
+            }),
+        };
+    }
+
+    internal CodeRecord? HandleSolutionFile(string relPath, string content, ScanContext context)
+    {
+        var info = _projectScanner.ParseSolution(relPath, content);
+        if (info is null) return null;
+        var snippet = $"Solution: {info.Name}\nProjects:\n" + string.Join('\n', info.Projects.Select(p => "  - " + p));
+        var redacted = _redactor.Redact(snippet);
+        if (redacted.Status == RedactionStatus.Failed)
+        {
+            Interlocked.Increment(ref Counters.RecordsRedactionFailed);
+            return null;
+        }
+        return new CodeRecord
+        {
+            RepositoryId = context.RepositoryId,
+            ScanJobId = context.ScanJobId,
+            RepositoryName = context.RepositoryName,
+            Branch = context.Branch,
+            CommitSha = context.CommitSha,
+            FilePath = relPath,
+            LineStart = 1,
+            LineEnd = Math.Max(1, content.Count(c => c == '\n') + 1),
+            RecordType = RecordType.FileSummary,
+            SymbolName = info.Name,
+            SymbolKind = SymbolKind.File,
+            Summary = $"Solution {info.Name} with {info.Projects.Count} project(s)",
+            CodeSnippet = redacted.Text,
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                kind = "solution",
+                projects = info.Projects,
+            }),
+        };
+    }
+
+    private static string BuildProjectSnippet(ProjectInfo info)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("Project: ").Append(info.Name).Append('\n');
+        if (info.Sdk is not null) sb.Append("SDK: ").Append(info.Sdk).Append('\n');
+        if (info.TargetFrameworks.Count > 0) sb.Append("TargetFrameworks: ").Append(string.Join(", ", info.TargetFrameworks)).Append('\n');
+        if (info.RootNamespace is not null) sb.Append("RootNamespace: ").Append(info.RootNamespace).Append('\n');
+        if (info.AssemblyName is not null) sb.Append("AssemblyName: ").Append(info.AssemblyName).Append('\n');
+        if (info.LangVersion is not null) sb.Append("LangVersion: ").Append(info.LangVersion).Append('\n');
+        sb.Append("Nullable: ").Append(info.NullableEnabled ? "enable" : "disable").Append('\n');
+        sb.Append("ImplicitUsings: ").Append(info.ImplicitUsings ? "enable" : "disable").Append('\n');
+        if (info.PackageReferences.Count > 0)
+        {
+            sb.Append("PackageReferences:\n");
+            foreach (var p in info.PackageReferences)
+                sb.Append("  - ").Append(p.Name).Append(p.Version is null ? "" : $" ({p.Version})").Append('\n');
+        }
+        if (info.ProjectReferences.Count > 0)
+        {
+            sb.Append("ProjectReferences:\n");
+            foreach (var pr in info.ProjectReferences)
+                sb.Append("  - ").Append(pr).Append('\n');
+        }
+        return sb.ToString();
     }
 
     internal static IEnumerable<string> EnumerateFiles(string root)

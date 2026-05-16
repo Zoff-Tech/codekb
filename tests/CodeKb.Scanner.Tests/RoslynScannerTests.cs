@@ -41,6 +41,73 @@ public class RoslynScannerTests : IDisposable
     }
 
     [Fact]
+    public async Task EmitsProjectSummary_ForCsprojFile()
+    {
+        File.WriteAllText(Path.Combine(_root, "Demo.csproj"), @"<Project Sdk=""Microsoft.NET.Sdk"">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Demo</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include=""Npgsql"" Version=""8.0.0"" />
+  </ItemGroup>
+</Project>");
+
+        var scanner = BuildScanner();
+        var (repo, ctx, opts) = BuildContext();
+        var records = new List<CodeRecord>();
+        await foreach (var r in scanner.ScanAsync(repo, ctx, opts, CancellationToken.None))
+            records.Add(r);
+
+        var project = records.FirstOrDefault(r => r.FilePath == "Demo.csproj");
+        project.Should().NotBeNull();
+        project!.RecordType.Should().Be(RecordType.FileSummary);
+        project.SymbolName.Should().Be("Demo");
+        project.MetadataJson.Should().Contain("\"kind\":\"project\"");
+        project.MetadataJson.Should().Contain("net8.0");
+        project.MetadataJson.Should().Contain("Npgsql");
+    }
+
+    [Fact]
+    public async Task EmitsSolutionSummary_ForSlnFile()
+    {
+        File.WriteAllText(Path.Combine(_root, "demo.sln"), @"Microsoft Visual Studio Solution File, Format Version 12.00
+Project(""{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}"") = ""Demo"", ""Demo\Demo.csproj"", ""{11111111-1111-1111-1111-111111111111}""
+EndProject
+");
+
+        var scanner = BuildScanner();
+        var (repo, ctx, opts) = BuildContext();
+        var records = new List<CodeRecord>();
+        await foreach (var r in scanner.ScanAsync(repo, ctx, opts, CancellationToken.None))
+            records.Add(r);
+
+        var sln = records.FirstOrDefault(r => r.FilePath == "demo.sln");
+        sln.Should().NotBeNull();
+        sln!.MetadataJson.Should().Contain("\"kind\":\"solution\"");
+        sln.MetadataJson.Should().Contain("Demo/Demo.csproj");
+    }
+
+    [Fact]
+    public async Task FileSummary_IncludesUsingDirectives()
+    {
+        File.WriteAllText(Path.Combine(_root, "Foo.cs"), @"
+using System;
+using Acme.Workflow;
+namespace Demo { public class Foo { public void M() {} } }");
+
+        var scanner = BuildScanner();
+        var (repo, ctx, opts) = BuildContext();
+        var records = new List<CodeRecord>();
+        await foreach (var r in scanner.ScanAsync(repo, ctx, opts, CancellationToken.None))
+            records.Add(r);
+
+        var fs = records.First(r => r.RecordType == RecordType.FileSummary);
+        fs.MetadataJson.Should().Contain("using_directives");
+        fs.MetadataJson.Should().Contain("Acme.Workflow");
+    }
+
+    [Fact]
     public async Task EmitsFileClassMethodSummaries_ForSimpleCs()
     {
         File.WriteAllText(Path.Combine(_root, "Foo.cs"), @"
