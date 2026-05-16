@@ -61,7 +61,7 @@ public sealed class ScanService : IScanService
                 CommitSha = loaded.CommitSha,
                 AlreadyIndexed = true,
                 Duration = sw.Elapsed,
-                Outcome = new ScanJobOutcome(ScanStatus.Completed, 0, 0, 0, 0, 0, 0, null),
+                Outcome = new ScanJobOutcome(ScanStatus.Completed, 0, 0, 0, 0, 0, null),
             };
         }
 
@@ -73,8 +73,6 @@ public sealed class ScanService : IScanService
         var options = new ScanOptions
         {
             IgnorePaths = _options.Scanner.IgnorePaths,
-            FeatureFlagMethodNames = _options.Scanner.FeatureFlagMethodNames,
-            FeatureFlagClientNames = _options.Scanner.FeatureFlagClientNames,
             Parallelism = _options.Scanner.Parallelism,
             MaxFileSizeKb = _options.Scanner.MaxFileSizeKb,
             SearchTerms = request.SearchTerms,
@@ -99,7 +97,6 @@ public sealed class ScanService : IScanService
             RecordsFailed: counters.RecordsFailed,
             RecordsRedactionFailed: counters.RecordsRedactionFailed,
             EmbeddingsCreated: embedResult.Succeeded.Count,
-            FeatureFlagMatches: counters.FeatureFlagMatches,
             ErrorMessage: null);
 
         await _jobStore.FinishAsync(scanJobId, outcome, ct);

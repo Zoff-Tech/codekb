@@ -15,7 +15,7 @@ public class ScanCommandFormatTests
         CommitSha = "abc1234567890",
         AlreadyIndexed = alreadyIndexed,
         Duration = TimeSpan.FromSeconds(107),
-        Outcome = new ScanJobOutcome(ScanStatus.Completed, 342, 184, 0, 0, 184, 12, null),
+        Outcome = new ScanJobOutcome(ScanStatus.Completed, 342, 184, 0, 0, 184, null),
     };
 
     [Fact]
@@ -30,7 +30,6 @@ public class ScanCommandFormatTests
         s.Should().Contain("Commit:               abc1234");
         s.Should().Contain("Files scanned:        342");
         s.Should().Contain("Records created:      184");
-        s.Should().Contain("Feature flag matches: 12");
         s.Should().Contain("Embeddings created:   184");
         s.Should().Contain("Duration:             1m 47s");
     }

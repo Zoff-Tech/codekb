@@ -40,12 +40,6 @@ public static class SearchSqlBuilder
             where.Add("cr.record_type = ANY(@record_types)");
         }
 
-        if (!string.IsNullOrEmpty(q.FeatureFlag))
-        {
-            parameters.Add(("feature_flag_name", q.FeatureFlag));
-            where.Add("cr.feature_flag_name = @feature_flag_name");
-        }
-
         var whereClause = where.Count == 0 ? string.Empty : "WHERE " + string.Join(" AND ", where);
         var sql = $@"
 SELECT cr.repository_name, cr.branch, cr.commit_sha, cr.file_path,

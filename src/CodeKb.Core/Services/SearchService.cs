@@ -27,18 +27,13 @@ public sealed class SearchService : ISearchService
         if (vectors.Count == 0)
             return Array.Empty<SearchHit>();
 
-        var recordTypes = request.RecordTypes;
-        if (!string.IsNullOrEmpty(request.FeatureFlag) && recordTypes.Count == 0)
-            recordTypes = new[] { RecordType.FeatureFlagUsage };
-
         var query = new SearchQuery(
             QueryVector: vectors[0],
             EmbeddingModel: _embedding.ModelId,
             TopK: request.TopK <= 0 ? 10 : request.TopK,
             Repositories: request.Repositories,
             Branch: request.Branch,
-            RecordTypes: recordTypes,
-            FeatureFlag: request.FeatureFlag,
+            RecordTypes: request.RecordTypes,
             IncludeStale: request.IncludeStale,
             IncludeOtherModels: request.IncludeOtherModels);
 

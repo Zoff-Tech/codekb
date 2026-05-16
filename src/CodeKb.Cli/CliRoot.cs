@@ -54,7 +54,6 @@ public static class CliRoot
         var repoOpt = new Option<string[]>("--repo", "Repository filter (repeatable)") { AllowMultipleArgumentsPerToken = true };
         var branchOpt = new Option<string?>("--branch", "Branch filter");
         var recordTypeOpt = new Option<string[]>("--record-type", "Record type filter (repeatable)") { AllowMultipleArgumentsPerToken = true };
-        var featureFlagOpt = new Option<string?>("--feature-flag", "Filter by feature flag name");
         var topKOpt = new Option<int>("--top-k", () => 10, "Top-K results");
         var minScoreOpt = new Option<double?>("--min-score", "Minimum similarity score");
         var formatOpt = new Option<string>("--format", () => "text", "text|json");
@@ -63,7 +62,7 @@ public static class CliRoot
 
         var ask = new Command("ask", "Semantic question over indexed code")
         {
-            questionArg, repoOpt, branchOpt, recordTypeOpt, featureFlagOpt, topKOpt, minScoreOpt, formatOpt,
+            questionArg, repoOpt, branchOpt, recordTypeOpt, topKOpt, minScoreOpt, formatOpt,
             includeStaleOpt, includeOtherModelsOpt, configOption,
         };
         ask.SetHandler(async ctx =>
@@ -86,7 +85,6 @@ public static class CliRoot
                 Repositories = ctx.ParseResult.GetValueForOption(repoOpt) ?? Array.Empty<string>(),
                 Branch = ctx.ParseResult.GetValueForOption(branchOpt),
                 RecordTypes = recordTypes,
-                FeatureFlag = ctx.ParseResult.GetValueForOption(featureFlagOpt),
                 TopK = ctx.ParseResult.GetValueForOption(topKOpt),
                 MinScore = ctx.ParseResult.GetValueForOption(minScoreOpt),
                 Format = ctx.ParseResult.GetValueForOption(formatOpt) ?? "text",

@@ -11,8 +11,6 @@ public class ScanOptionsAndRequestsTests
     {
         var opts = new ScanOptions();
         opts.IgnorePaths.Should().Contain("bin");
-        opts.FeatureFlagMethodNames.Should().Contain("IsEnabled");
-        opts.FeatureFlagClientNames.Should().Contain("IFeatureManager");
         opts.Parallelism.Should().Be(4);
         opts.MaxFileSizeKb.Should().Be(512);
         opts.SearchTerms.Should().BeEmpty();
@@ -71,7 +69,7 @@ public class ScanOptionsAndRequestsTests
             RepositoryName = "r",
             Branch = "main",
             CommitSha = "s",
-            Outcome = new ScanJobOutcome(ScanStatus.Completed, 1, 1, 0, 0, 1, 0, null),
+            Outcome = new ScanJobOutcome(ScanStatus.Completed, 1, 1, 0, 0, 1, null),
             Duration = TimeSpan.FromSeconds(1),
         };
         r.AlreadyIndexed.Should().BeFalse();

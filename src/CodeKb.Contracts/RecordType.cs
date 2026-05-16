@@ -5,7 +5,6 @@ public enum RecordType
     FileSummary,
     ClassSummary,
     MethodSummary,
-    FeatureFlagUsage,
     SearchTermMatch,
     TestReference,
     ConfigurationReference,
@@ -18,7 +17,6 @@ public static class RecordTypes
         RecordType.FileSummary => "file_summary",
         RecordType.ClassSummary => "class_summary",
         RecordType.MethodSummary => "method_summary",
-        RecordType.FeatureFlagUsage => "feature_flag_usage",
         RecordType.SearchTermMatch => "search_term_match",
         RecordType.TestReference => "test_reference",
         RecordType.ConfigurationReference => "configuration_reference",
@@ -30,7 +28,6 @@ public static class RecordTypes
         "file_summary" => RecordType.FileSummary,
         "class_summary" => RecordType.ClassSummary,
         "method_summary" => RecordType.MethodSummary,
-        "feature_flag_usage" => RecordType.FeatureFlagUsage,
         "search_term_match" => RecordType.SearchTermMatch,
         "test_reference" => RecordType.TestReference,
         "configuration_reference" => RecordType.ConfigurationReference,
@@ -58,26 +55,6 @@ public enum FileKind
     Test,
     Generated,
     Configuration,
-}
-
-public enum FeatureFlagUsageType
-{
-    RuntimeBranch,
-    ConstantDefinition,
-    Injection,
-    Config,
-}
-
-public static class FeatureFlagUsageTypes
-{
-    public static string ToWire(this FeatureFlagUsageType t) => t switch
-    {
-        FeatureFlagUsageType.RuntimeBranch => "runtime_branch",
-        FeatureFlagUsageType.ConstantDefinition => "constant_definition",
-        FeatureFlagUsageType.Injection => "injection",
-        FeatureFlagUsageType.Config => "config",
-        _ => throw new ArgumentOutOfRangeException(nameof(t), t, "Unknown usage type"),
-    };
 }
 
 public enum SearchMatchKind

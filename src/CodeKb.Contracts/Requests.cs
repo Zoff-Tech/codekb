@@ -23,7 +23,6 @@ public sealed record SearchRequest
     public IReadOnlyList<string> Repositories { get; init; } = Array.Empty<string>();
     public string? Branch { get; init; }
     public IReadOnlyList<RecordType> RecordTypes { get; init; } = Array.Empty<RecordType>();
-    public string? FeatureFlag { get; init; }
     public int TopK { get; init; } = 10;
     public double? MinScore { get; init; }
     public string Format { get; init; } = "text";
@@ -40,7 +39,6 @@ public sealed record ScanJobOutcome(
     int RecordsFailed,
     int RecordsRedactionFailed,
     int EmbeddingsCreated,
-    int FeatureFlagMatches,
     string? ErrorMessage);
 
 public sealed record ScanResult

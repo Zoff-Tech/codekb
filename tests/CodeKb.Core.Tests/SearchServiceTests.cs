@@ -47,14 +47,17 @@ public class SearchServiceTests
     }
 
     [Fact]
-    public async Task AskAsync_FeatureFlag_AppliesFilter()
+    public async Task AskAsync_FlagNameQuery_FlowsThroughAsSemanticSearch()
     {
+        // After removing the feature-flag feature, querying for a flag is
+        // just a plain semantic search — the embedded snippet / tokens take
+        // care of matching. The SearchService no longer forces a record-type
+        // filter, so the caller sees results across all record kinds.
         var (svc, store, _) = Build();
         SearchQuery? captured = null;
         store.SearchResponder = q => { captured = q; return Array.Empty<SearchHit>(); };
-        await svc.AskAsync(new SearchRequest { Question = "q", FeatureFlag = "FF" }, CancellationToken.None);
-        captured!.FeatureFlag.Should().Be("FF");
-        captured.RecordTypes.Should().Contain(RecordType.FeatureFlagUsage);
+        await svc.AskAsync(new SearchRequest { Question = "EnableNewWorkflow" }, CancellationToken.None);
+        captured!.RecordTypes.Should().BeEmpty();
     }
 
     [Fact]

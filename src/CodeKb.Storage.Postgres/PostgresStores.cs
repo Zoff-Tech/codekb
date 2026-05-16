@@ -121,10 +121,10 @@ public sealed class PostgresCodeRecordStore : ICodeRecordStore
             await using var cmd = _ds.CreateCommand(@"
 INSERT INTO code_record (id, repository_id, scan_job_id, repository_name, branch, commit_sha,
     file_path, line_start, line_end, record_type, symbol_name, symbol_kind, namespace,
-    class_name, method_name, feature_flag_name, usage_type, summary, code_snippet,
+    class_name, method_name, summary, code_snippet,
     metadata_json, is_test_code, is_generated_code, is_stale, embedding_status)
 VALUES (@id, @repo, @job, @repo_name, @branch, @sha, @fp, @ls, @le, @rt,
-    @sname, @skind, @ns, @cls, @mname, @ff, @utype, @summary, @snippet,
+    @sname, @skind, @ns, @cls, @mname, @summary, @snippet,
     @meta::jsonb, @test, @gen, FALSE, 'pending')
 ON CONFLICT (repository_id, file_path, symbol_name, record_type, line_start, commit_sha) DO NOTHING");
             cmd.Parameters.AddWithValue("id", r.Id);
@@ -142,8 +142,6 @@ ON CONFLICT (repository_id, file_path, symbol_name, record_type, line_start, com
             cmd.Parameters.AddWithValue("ns", (object?)r.Namespace ?? DBNull.Value);
             cmd.Parameters.AddWithValue("cls", (object?)r.ClassName ?? DBNull.Value);
             cmd.Parameters.AddWithValue("mname", (object?)r.MethodName ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("ff", (object?)r.FeatureFlagName ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("utype", (object?)r.UsageType?.ToWire() ?? DBNull.Value);
             cmd.Parameters.AddWithValue("summary", r.Summary);
             cmd.Parameters.AddWithValue("snippet", r.CodeSnippet);
             cmd.Parameters.AddWithValue("meta", r.MetadataJson);

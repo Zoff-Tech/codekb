@@ -31,6 +31,5 @@ public sealed record SearchQuery(
     IReadOnlyList<string> Repositories,
     string? Branch,
     IReadOnlyList<RecordType> RecordTypes,
-    string? FeatureFlag,
     bool IncludeStale,
     bool IncludeOtherModels);

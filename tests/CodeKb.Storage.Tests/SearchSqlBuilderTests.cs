@@ -22,10 +22,9 @@ public class SearchSqlBuilderTests
         public List<string> Repos = new();
         public string? Branch;
         public List<RecordType> Types = new();
-        public string? FF;
         public bool Stale;
         public bool Other;
-        public SearchQuery Build() => new(Vec, Model, TopK, Repos, Branch, Types, FF, Stale, Other);
+        public SearchQuery Build() => new(Vec, Model, TopK, Repos, Branch, Types, Stale, Other);
     }
 
     [Fact]
@@ -72,17 +71,10 @@ public class SearchSqlBuilderTests
     [Fact]
     public void Build_WithRecordTypes_AddsParam()
     {
-        var built = SearchSqlBuilder.Build(Base(b => b.Types = new() { RecordType.FeatureFlagUsage, RecordType.MethodSummary }));
+        var built = SearchSqlBuilder.Build(Base(b => b.Types = new() { RecordType.ClassSummary, RecordType.MethodSummary }));
         built.Sql.Should().Contain("cr.record_type = ANY(@record_types)");
         var p = built.Parameters.Single(x => x.Name == "record_types");
-        ((string[])p.Value!).Should().Contain("feature_flag_usage").And.Contain("method_summary");
-    }
-
-    [Fact]
-    public void Build_WithFeatureFlag_AddsParam()
-    {
-        var built = SearchSqlBuilder.Build(Base(b => b.FF = "EnableNewWorkflow"));
-        built.Sql.Should().Contain("cr.feature_flag_name = @feature_flag_name");
+        ((string[])p.Value!).Should().Contain("class_summary").And.Contain("method_summary");
     }
 
     [Fact]

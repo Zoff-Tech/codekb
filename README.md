@@ -7,17 +7,22 @@
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/download/dotnet/8.0)
 [![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen.svg)](#testing--coverage)
 
-codekb scans a C# repository, extracts a normalized, language-aware model of the code (files, classes, methods, feature-flag usages, search-term hits, test references, configuration references), generates embeddings for each record, and stores them in PostgreSQL with [`pgvector`](https://github.com/pgvector/pgvector) so that you can ask **semantic** questions over the codebase later.
+codekb scans a C# repository, extracts a normalized, language-aware model of the code (solutions, projects, files, classes, methods, constructors, indexers, operators, fields, events, enum members, delegates, local functions, search-term hits, test references, configuration references), generates embeddings for each record, and stores them in PostgreSQL with [`pgvector`](https://github.com/pgvector/pgvector) so that you can ask **semantic** questions over the codebase later.
 
 It is **not** an autonomous coding agent. It is the trustworthy code-knowledge index that an agentic SDLC framework can build on top of.
 
 ## What it answers
 
-- *Where is this feature flag used?*
+- *Where is this term used?* (e.g. a feature-flag key like `EnableNewWorkflow`, a workflow name, a config key — flag names flow into method snippets, identifier tokens, and search-term records, so semantic search surfaces them like any other identifier)
 - *Which files mention a given business workflow?*
 - *Which classes or methods are related to this term?*
 - *Which tests reference this feature?*
+- *What does this method call, and what does it instantiate?* (call graph)
+- *Which projects depend on this package?* (project metadata)
+- *Which files import `Acme.Workflow`?* (using directives)
 - *What code context should an agent retrieve before planning a change?*
+
+Sub-word tokenization means a query like *"account"* matches `PrePaidAccount`, `process-payment` matches `processPayment`, and `is_enabled` matches `IsEnabled` — see [Embedding-time tokenization](#embedding-time-tokenization).
 
 ---
 
@@ -65,8 +70,6 @@ embedding:
 
 scanner:
   ignorePaths: [bin, obj, .git, node_modules, packages]
-  featureFlagMethodNames: [IsEnabled, IsEnabledAsync, IsFeatureEnabled, BoolVariation]
-  featureFlagClientNames: [IFeatureFlagService, IFeatureManager, ILaunchDarklyClient]
   parallelism: 4
   maxFileSizeKb: 512
 ```
@@ -97,7 +100,6 @@ Branch:               main
 Commit:               abc1234
 Files scanned:        342
 Records created:      184
-Feature flag matches: 12
 Embeddings created:   184
 Duration:             1m 47s
 ```
@@ -139,15 +141,26 @@ Repo URL / Local Path
 RepositoryLoader      (LibGit2Sharp — shallow clone or local read)
         │
         ▼
-RoslynScanner         (loads .sln / .csproj, classifies files,
-        │              walks syntax trees, runs detectors,
-        │              redacts secrets, emits normalized records)
-        ▼
-CodeRecord (DTO)      (file_summary | class_summary | method_summary
-        │              | feature_flag_usage | search_term_match
-        │              | test_reference | configuration_reference)
-        ▼
-EmbeddingPipeline     (OpenAI / Azure OpenAI, batched with retry)
+RoslynScanner         (orchestrator: project + syntax + detectors)
+   │ │ │ │
+   │ │ │ └─── ProjectScanner    (.sln + .csproj → projects, packages, references)
+   │ │ └───── SyntaxExtractor   (types, methods, ctors, indexers, operators,
+   │ │                           conversions, fields, events, enum members,
+   │ │                           delegates, local functions, nested types;
+   │ │                           + call graph: calls + instantiates per method;
+   │ │                           + using directives & external-type refs)
+   │ └─────── SearchTermMatcher (identifier / literal / comment / xml-doc)
+   └───────── ConfigFileScanner (JSON, YAML, XML, .env)
+                  │
+                  ▼
+            Redactor (secret patterns; drop-and-count if unsafe)
+                  │
+                  ▼
+            CodeRecord (DTO)
+                  │
+                  ▼
+EmbeddingPipeline     (IdentifierTokenizer sub-word split → embedding text;
+                       OpenAI / Azure OpenAI, batched with retry)
         │
         ▼
 Postgres + pgvector   (idempotent insert, HNSW index on vector(N))
@@ -158,16 +171,58 @@ SearchService         (codekb ask → cosine top-K with filters)
 
 Every component sits behind an interface so the same core can be exposed via an HTTP API later with no rewrites. See [docs/specs/codekb-mvp/design.md](docs/specs/codekb-mvp/design.md) for the full design.
 
+### What gets extracted
+
+For every C# repository, codekb emits records for:
+
+| Record kind | Source constructs | Notes |
+|---|---|---|
+| `file_summary` | every `.cs` file | metadata includes `loc`, `top_level_types`, `using_directives`, `external_types`, `uses_unsafe` |
+| `file_summary` (project) | every `.csproj` | metadata includes `sdk`, `target_frameworks`, `root_namespace`, `assembly_name`, `lang_version`, `nullable`, `implicit_usings`, `package_references` (name + version), `project_references` |
+| `file_summary` (solution) | every `.sln` | metadata lists all project paths |
+| `class_summary` | classes, interfaces, records, structs, enums, **delegates**, nested types | base types, implements, attributes, abstract/sealed/partial flags |
+| `method_summary` | methods, properties, **constructors**, **destructors**, **indexers**, **operators**, **conversion operators**, **fields** (each variable in a declaration), **events** (both forms), **enum members**, **local functions** | per-symbol metadata: signature, return type, parameters, attributes, async/static/const/readonly flags, cyclomatic complexity, **`calls`** (invocation targets), **`instantiates`** (object-creation targets), and `kind` discriminator |
+| `search_term_match` | identifier / string-literal / comment / XML-doc hits | repeatable via `--search` — useful for tracking feature-flag keys, business terms, or any token you want callable out explicitly |
+| `test_reference` | each method in a test file | framework auto-detected (xUnit, NUnit, MSTest) |
+| `configuration_reference` | JSON / YAML / XML / `.env` keys | values redacted by default |
+
+Each method-shaped record also includes the method body (or expression body) as `CodeSnippet`, capped at 200 lines / 4 KB and truncated to a statement boundary. Property bodies, constructor bodies, indexer bodies, operator bodies, and local-function bodies are captured the same way.
+
+### Call graph and dependencies
+
+- **Per method / constructor / local function** — Roslyn walks the body and collects:
+  - `calls: [...]` — every `InvocationExpressionSyntax` callee name (up to 50, deduplicated).
+  - `instantiates: [...]` — every `ObjectCreationExpressionSyntax` target type (up to 50, deduplicated).
+- **Per file** — `using_directives` and `external_types` (base types, return types, parameter types, field types, instantiated types) are aggregated into the `file_summary` metadata.
+- **Per project** — `package_references` and `project_references` are extracted from `.csproj` and stored on the project's `file_summary` record so an agent can answer *"which projects depend on Npgsql 8.0?"*.
+
+### Embedding-time tokenization
+
+Before each record's embedding text is built, identifier-shaped fields (`Namespace`, `ClassName`, `MethodName`, `SymbolName`, and the file basename) flow through `IdentifierTokenizer.Split`, which adds the sub-word tokens to a `Tokens:` line in the embedding text. This means the model sees:
+
+| Input | Tokens added |
+|---|---|
+| `PrePaidAccount` | `PrePaidAccount`, `Pre`, `Paid`, `Account` |
+| `processPaymentAsync` | `processPaymentAsync`, `process`, `Payment`, `Async` |
+| `XMLParser` | `XMLParser`, `XML`, `Parser` (acronym-aware) |
+| `process-payment` | `process-payment`, `process`, `payment` |
+| `is_enabled` | `is_enabled`, `is`, `enabled` |
+| `Acme.Workflow.WorkflowService` | `Acme`, `Workflow`, `WorkflowService`, `Service` |
+| `HttpV2Client` | `Http`, `V`, `2`, `Client` (letter/digit boundary) |
+
+Tokenization runs in-memory inside the embedding pipeline — it does not change what's stored in Postgres, only what the embedding model "reads".
+
 ### Project layout
 
 ```text
 src/
   CodeKb.Contracts/         DTOs and enums shared across modules
-  CodeKb.Scanner.Roslyn/    File classifier, detectors, snippet builder,
-                            redactor, syntax extractor, scanner orchestrator,
-                            repository loader
+  CodeKb.Scanner.Roslyn/    File classifier, project scanner, detectors,
+                            snippet builder, redactor, syntax extractor,
+                            scanner orchestrator, repository loader
   CodeKb.Embedding/         IEmbeddingClient, OpenAI client, batcher,
-                            retry policy, embedding-text builder, pipeline
+                            retry policy, identifier tokenizer,
+                            embedding-text builder, pipeline
   CodeKb.Storage.Postgres/  Stores, SQL builder, embedded migrations
   CodeKb.Core/              ConfigLoader, ScanService, SearchService, DI
   CodeKb.Cli/               System.CommandLine entry, scan/ask handlers
@@ -219,8 +274,7 @@ codekb ask "<question>" [filters] [output options]
 |---|---|
 | `--repo <name>` | Filter by repository name. Repeatable. |
 | `--branch <name>` | Filter by branch |
-| `--record-type <t>` | `file_summary`, `class_summary`, `method_summary`, `feature_flag_usage`, `search_term_match`, `test_reference`, `configuration_reference`. Repeatable. |
-| `--feature-flag <n>` | Shortcut: filter to `feature_flag_usage` records for flag `<n>` |
+| `--record-type <t>` | `file_summary`, `class_summary`, `method_summary`, `search_term_match`, `test_reference`, `configuration_reference`. Repeatable. |
 | `--top-k <n>` | Number of results (default 10) |
 | `--min-score <f>` | Drop results below this cosine similarity |
 | `--format text\|json` | Output format (default text) |
@@ -262,8 +316,6 @@ embedding:
 
 scanner:
   ignorePaths: [string]
-  featureFlagMethodNames: [string]
-  featureFlagClientNames: [string]
   parallelism: int
   maxFileSizeKb: int
 ```
@@ -331,13 +383,13 @@ open coverage/html/index.html
 
 | Project | Tests |
 |---|---|
-| CodeKb.Contracts.Tests | 37 |
-| CodeKb.Scanner.Tests | 145 |
-| CodeKb.Embedding.Tests | 26 |
-| CodeKb.Storage.Tests | 12 |
+| CodeKb.Contracts.Tests | 31 |
+| CodeKb.Scanner.Tests | 152 |
+| CodeKb.Embedding.Tests | 41 |
+| CodeKb.Storage.Tests | 11 |
 | CodeKb.Core.Tests | 24 |
 | CodeKb.Cli.Tests | 19 |
-| **Total** | **263** |
+| **Total** | **278** |
 
 - All tests pure-unit (in-process). No Postgres or network dependency.
 - **Line coverage: 92.52%**. Live-infrastructure code (Postgres stores, DI composition root, LibGit2Sharp clone path, CLI entry point) is marked `[ExcludeFromCodeCoverage]` since it requires integration tests (Postgres container, real network).
@@ -358,21 +410,26 @@ This project follows a spec-driven workflow. Before changing behavior, refresh t
 What's **in** the MVP (and present in this repo):
 
 - C# scanning via Roslyn (`.sln` → `.csproj` → syntax-only fallback)
-- Feature-flag detection (string literal, named constant, method call)
-- Configuration scanning (JSON, `.env`)
+- Full syntactic coverage: classes, interfaces, records, structs, enums, delegates, nested types, methods, properties, constructors, destructors, indexers, operators, conversion operators, fields, events, enum members, local functions
+- Method-implementation snippets (body or expression-body, capped at 200 lines / 4 KB)
+- **Per-method call graph** (`calls` + `instantiates`) extracted syntactically
+- **Per-file dependencies** (`using_directives` + `external_types`)
+- **Project + solution metadata** (`.csproj` and `.sln`: SDK, target frameworks, package references, project references, root namespace, assembly name, lang version, nullable, implicit usings)
+- **Embedding-time identifier tokenization** (PascalCase / camelCase with acronym handling, kebab-case, snake_case, dotted names, path segments) — means feature-flag keys and other identifier-shaped tokens are retrievable through plain semantic search; no dedicated detector required
+- Configuration scanning (JSON, YAML, XML, `.env`)
 - Secret redaction
-- Search-term records
+- Search-term records (identifier / literal / comment / XML-doc)
 - OpenAI / Azure OpenAI embeddings with retry & batching
 - Postgres + pgvector storage with HNSW index, stale-marking, idempotent insert
 - Text and JSON output for `ask`
 
 What's **out** of the MVP (deliberately):
 
+- Semantic-model (cross-file) call graph — current call graph is syntactic only
 - OmniSharp integration
 - LangGraph / agent orchestration
 - Automatic code modification or PR creation
 - Multi-language support (C# only)
-- Full dependency-graph / call-graph generation
 - Cross-language migration
 
 These can come once the ingestion worker is proven in production.

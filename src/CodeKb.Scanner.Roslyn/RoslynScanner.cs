@@ -7,7 +7,6 @@ using CodeKb.Scanner.Roslyn.Projects;
 using CodeKb.Scanner.Roslyn.Redaction;
 using CodeKb.Scanner.Roslyn.Snippets;
 using CodeKb.Scanner.Roslyn.Syntax;
-using Microsoft.CodeAnalysis.CSharp;
 using SymbolKind = CodeKb.Contracts.SymbolKind;
 
 namespace CodeKb.Scanner.Roslyn;
@@ -32,14 +31,12 @@ public sealed class ScanCounters
     public int RecordsCreated;
     public int RecordsFailed;
     public int RecordsRedactionFailed;
-    public int FeatureFlagMatches;
 }
 
 public sealed class RoslynScanner : IRoslynScanner
 {
     private readonly IFileClassifier _classifier;
     private readonly ISyntaxRecordExtractor _extractor;
-    private readonly IFeatureFlagDetector _flagDetector;
     private readonly ISearchTermMatcher _searchTermMatcher;
     private readonly IConfigFileScanner _configScanner;
     private readonly IRedactor _redactor;
@@ -50,7 +47,6 @@ public sealed class RoslynScanner : IRoslynScanner
     public RoslynScanner(
         IFileClassifier classifier,
         ISyntaxRecordExtractor extractor,
-        IFeatureFlagDetector flagDetector,
         ISearchTermMatcher searchTermMatcher,
         IConfigFileScanner configScanner,
         IRedactor redactor,
@@ -58,7 +54,6 @@ public sealed class RoslynScanner : IRoslynScanner
     {
         _classifier = classifier;
         _extractor = extractor;
-        _flagDetector = flagDetector;
         _searchTermMatcher = searchTermMatcher;
         _configScanner = configScanner;
         _redactor = redactor;
@@ -235,44 +230,6 @@ public sealed class RoslynScanner : IRoslynScanner
             }
         }
 
-        var tree = CSharpSyntaxTree.ParseText(content);
-        foreach (var hit in _flagDetector.Detect(tree, semanticModel: null, options))
-        {
-            Interlocked.Increment(ref Counters.FeatureFlagMatches);
-            var snippet = SnippetBuilder.BuildAroundLine(content, hit.Line);
-            var redacted = _redactor.Redact(snippet);
-            if (redacted.Status == RedactionStatus.Failed)
-            {
-                Interlocked.Increment(ref Counters.RecordsRedactionFailed);
-                continue;
-            }
-            yield return new CodeRecord
-            {
-                RepositoryId = context.RepositoryId,
-                ScanJobId = context.ScanJobId,
-                RepositoryName = context.RepositoryName,
-                Branch = context.Branch,
-                CommitSha = context.CommitSha,
-                FilePath = relPath,
-                LineStart = hit.Line,
-                LineEnd = hit.Line,
-                RecordType = RecordType.FeatureFlagUsage,
-                SymbolName = $"{relPath}:{hit.Line}",
-                FeatureFlagName = hit.FlagName,
-                UsageType = hit.UsageType,
-                Summary = $"Feature flag '{hit.FlagName}' usage ({hit.UsageType.ToWire()})",
-                CodeSnippet = redacted.Text,
-                MetadataJson = JsonSerializer.Serialize(new
-                {
-                    client_type = hit.ReceiverTypeName,
-                    method = hit.MethodName,
-                    usage_type = hit.UsageType.ToWire(),
-                    default_value = hit.DefaultValue,
-                }),
-                IsTestCode = isTest,
-            };
-        }
-
         if (options.SearchTerms.Count > 0)
         {
             foreach (var rec in EmitSearchTermRecords(content, relPath, context, isTest, options))
@@ -392,8 +349,6 @@ public sealed class RoslynScanner : IRoslynScanner
                 LineEnd = m.LineEnd,
                 RecordType = RecordType.ConfigurationReference,
                 SymbolName = m.Key,
-                FeatureFlagName = m.Key,
-                UsageType = FeatureFlagUsageType.Config,
                 Summary = $"config key '{m.Key}' in {relPath}",
                 CodeSnippet = redacted.Text,
                 MetadataJson = JsonSerializer.Serialize(new

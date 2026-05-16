@@ -54,7 +54,6 @@ public static class ScanCommand
         writer.WriteLine($"Commit:               {Trim(result.CommitSha)}");
         writer.WriteLine($"Files scanned:        {result.Outcome.FilesScanned}");
         writer.WriteLine($"Records created:      {result.Outcome.RecordsCreated}");
-        writer.WriteLine($"Feature flag matches: {result.Outcome.FeatureFlagMatches}");
         writer.WriteLine($"Embeddings created:   {result.Outcome.EmbeddingsCreated}");
         writer.WriteLine($"Duration:             {FormatDuration(result.Duration)}");
     }

@@ -24,7 +24,6 @@ public static class CompositionRoot
 
         services.AddSingleton<IFileClassifier, FileClassifier>();
         services.AddSingleton<ISyntaxRecordExtractor, SyntaxRecordExtractor>();
-        services.AddSingleton<IFeatureFlagDetector, FeatureFlagDetector>();
         services.AddSingleton<ISearchTermMatcher, SearchTermMatcher>();
         services.AddSingleton<IConfigFileScanner, ConfigFileScanner>();
         services.AddSingleton<IProjectScanner, ProjectScanner>();

@@ -28,8 +28,6 @@ public sealed class EmbeddingOptions
 public sealed class ScannerOptions
 {
     public List<string> IgnorePaths { get; set; } = new() { "bin", "obj", ".git", "node_modules", "packages" };
-    public List<string> FeatureFlagMethodNames { get; set; } = new() { "IsEnabled", "IsEnabledAsync", "IsFeatureEnabled", "BoolVariation" };
-    public List<string> FeatureFlagClientNames { get; set; } = new() { "IFeatureFlagService", "IFeatureManager", "ILaunchDarklyClient" };
     public int Parallelism { get; set; } = 4;
     public int MaxFileSizeKb { get; set; } = 512;
 }

@@ -17,8 +17,6 @@ public sealed record CodeRecord
     public string? Namespace { get; init; }
     public string? ClassName { get; init; }
     public string? MethodName { get; init; }
-    public string? FeatureFlagName { get; init; }
-    public FeatureFlagUsageType? UsageType { get; init; }
     public required string Summary { get; init; }
     public required string CodeSnippet { get; init; }
     public string MetadataJson { get; init; } = "{}";

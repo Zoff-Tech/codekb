@@ -27,7 +27,7 @@ public class CliRootTests
     {
         var root = CliRoot.BuildRootCommand();
         var ask = root.Subcommands.Single(c => c.Name == "ask");
-        ask.Options.Select(o => o.Name).Should().Contain(new[] { "repo", "branch", "record-type", "feature-flag", "top-k" });
+        ask.Options.Select(o => o.Name).Should().Contain(new[] { "repo", "branch", "record-type", "top-k" });
     }
 
     [Fact]

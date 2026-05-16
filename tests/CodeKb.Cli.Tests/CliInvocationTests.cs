@@ -45,7 +45,7 @@ public class CliInvocationTests
     {
         // This will fail downstream (no DB) but should parse cleanly and exit infra error, not user error.
         var root = CliRoot.BuildRootCommand();
-        var rc = await root.InvokeAsync(new[] { "ask", "q", "--record-type", "method_summary", "--record-type", "feature_flag_usage" });
+        var rc = await root.InvokeAsync(new[] { "ask", "q", "--record-type", "method_summary", "--record-type", "class_summary" });
         rc.Should().Be(CliRoot.ExitInfraError);
     }
 

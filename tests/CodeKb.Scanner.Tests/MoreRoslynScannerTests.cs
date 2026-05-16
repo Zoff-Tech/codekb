@@ -24,7 +24,6 @@ public class MoreRoslynScannerTests : IDisposable
     private RoslynScanner BuildScanner() => new(
         new FileClassifier(),
         new SyntaxRecordExtractor(),
-        new FeatureFlagDetector(),
         new SearchTermMatcher(),
         new ConfigFileScanner(),
         new Redactor());

@@ -42,8 +42,6 @@ CREATE TABLE IF NOT EXISTS code_record (
     namespace TEXT,
     class_name TEXT,
     method_name TEXT,
-    feature_flag_name TEXT,
-    usage_type TEXT,
     summary TEXT NOT NULL,
     code_snippet TEXT NOT NULL,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,

@@ -18,9 +18,6 @@ public static class EmbeddingTextBuilder
         AppendIfNonEmpty(sb, "Class", record.ClassName);
         AppendIfNonEmpty(sb, "Method", record.MethodName);
         AppendIfNonEmpty(sb, "Symbol", record.SymbolName);
-        AppendIfNonEmpty(sb, "Feature Flag", record.FeatureFlagName);
-        if (record.UsageType.HasValue)
-            AppendIfNonEmpty(sb, "Usage Type", record.UsageType.Value.ToWire());
         AppendIfNonEmpty(sb, "Summary", record.Summary);
         AppendIfNonEmpty(sb, "Tokens", BuildTokenLine(record));
         if (!string.IsNullOrEmpty(record.CodeSnippet))
@@ -39,7 +36,6 @@ public static class EmbeddingTextBuilder
         AddTokens(record.ClassName, tokens, seen);
         AddTokens(record.MethodName, tokens, seen);
         AddTokens(record.SymbolName, tokens, seen);
-        AddTokens(record.FeatureFlagName, tokens, seen);
         AddTokens(FileBaseName(record.FilePath), tokens, seen);
         return tokens.Count == 0 ? string.Empty : string.Join(' ', tokens);
     }

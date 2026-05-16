@@ -27,7 +27,6 @@ public class RoslynScannerTests : IDisposable
     private RoslynScanner BuildScanner() => new(
         new FileClassifier(),
         new SyntaxRecordExtractor(),
-        new FeatureFlagDetector(),
         new SearchTermMatcher(),
         new ConfigFileScanner(),
         new Redactor());
@@ -142,22 +141,28 @@ public class Foo { public int M() => 1; }");
     }
 
     [Fact]
-    public async Task EmitsFeatureFlagRecord_ForLiteralInIsEnabledCall()
+    public async Task FlagName_FlowsIntoMethodSnippet_SoEmbeddingsCanFindIt()
     {
+        // Feature flags are no longer a first-class concept. The flag name
+        // appears in the method's CodeSnippet (and via --search, as a
+        // search_term_match record), which is what the embedding sees — so
+        // a semantic query for "EnableNewWorkflow" will still surface this
+        // method.
         File.WriteAllText(Path.Combine(_root, "Use.cs"), @"
 class Use {
-    IFeatureManager _featureManager;
-    public void M() { _featureManager.IsEnabled(""EnableNewWorkflow""); }
+    public void M() { var on = Flags.IsEnabled(""EnableNewWorkflow""); }
 }");
         var scanner = BuildScanner();
-        var (repo, ctx, opts) = BuildContext();
+        var (repo, ctx, opts) = BuildContext(new[] { "EnableNewWorkflow" });
         var records = new List<CodeRecord>();
         await foreach (var r in scanner.ScanAsync(repo, ctx, opts, CancellationToken.None))
             records.Add(r);
 
-        records.Should().Contain(r => r.RecordType == RecordType.FeatureFlagUsage
-            && r.FeatureFlagName == "EnableNewWorkflow");
-        scanner.Counters.FeatureFlagMatches.Should().BeGreaterThan(0);
+        records.Should().Contain(r => r.RecordType == RecordType.MethodSummary
+            && r.MethodName == "M"
+            && r.CodeSnippet.Contains("EnableNewWorkflow"));
+        records.Should().Contain(r => r.RecordType == RecordType.SearchTermMatch
+            && r.SymbolName == "EnableNewWorkflow");
     }
 
     [Fact]
@@ -172,7 +177,7 @@ class Use {
             records.Add(r);
 
         records.Should().Contain(r => r.RecordType == RecordType.ConfigurationReference
-            && r.FeatureFlagName == "EnableNewWorkflow");
+            && r.SymbolName == "EnableNewWorkflow");
     }
 
     [Fact]
