@@ -299,47 +299,193 @@ By default codekb excludes stale records and records embedded with a different m
 
 ## Configuration
 
-codekb reads `config/codekb.yaml` by default. Environment variables override YAML values for secrets and per-host settings.
+codekb reads its config from a YAML file plus a small set of environment variables.
+
+### How config is resolved
+
+1. **Load YAML.** codekb reads `./config/codekb.yaml` by default. Override with `--config <path>` on any CLI command. If the file is missing, codekb still runs with the built-in defaults — useful for read-only scans of public repos with all settings provided via env.
+2. **Reject credentials in YAML.** Before parsing, codekb scans the file for forbidden credential keys (see [Credentials](#credentials)). A match fails the load with `ConfigLoadException`.
+3. **Apply environment overrides.** Environment variables are applied on top of YAML values. Anything set in env wins.
+4. **Validate.** All non-secret fields are checked against the rules in [Validation](#validation) and the process exits with code `2` (user error) on violation.
 
 ### YAML schema
 
+Every field is optional — defaults apply when omitted.
+
 ```yaml
 storage:
-  postgresConnectionString: string
+  postgresConnectionString: ""        # libpq connection string; see "Storage options"
 
 embedding:
-  provider: openai | azure
-  model: string
-  modelVersion: string         # optional, defaults to "1"
-  dimension: int               # must match the pgvector column width
-  batchSize: int               # capped by provider per-call limit
-  maxRetries: int
-  retryBackoffSeconds: float   # exponential base
+  provider: "openai"                  # "openai" | "azure"
+  model: "text-embedding-3-small"
+  modelVersion: "1"                   # bumped when you intentionally re-embed with a new contract
+  dimension: 1536                     # MUST match the pgvector column width
+  batchSize: 256                      # requests are split into batches of this size
+  maxRetries: 5                       # per-batch retry on transient failures
+  retryBackoffSeconds: 2.0            # exponential base, in seconds
 
 scanner:
-  ignorePaths: [string]
-  parallelism: int
-  maxFileSizeKb: int
+  ignorePaths: [bin, obj, .git, node_modules, packages]
+  parallelism: 4                      # max concurrent file-scan workers
+  maxFileSizeKb: 512                  # files larger than this are skipped
 ```
 
-### Environment overrides
+Names are camelCase in YAML (e.g. `postgresConnectionString`, not `PostgresConnectionString`).
 
-| Var | Maps to |
-|---|---|
-| `EMBEDDING_API_KEY` | `embedding.apiKey` |
-| `EMBEDDING_ENDPOINT` | `embedding.endpoint` |
-| `EMBEDDING_MODEL` | `embedding.model` |
-| `EMBEDDING_PROVIDER` | `embedding.provider` |
-| `EMBEDDING_MODEL_DIMENSION` | `embedding.dimension` |
-| `CODEKB__STORAGE__POSTGRESCONNECTIONSTRING` | `storage.postgresConnectionString` |
-| `CODEKB__EMBEDDING__*` | Nested embedding fields |
-| `GIT_TOKEN` / `GIT_USERNAME` | Used by the repository loader for private HTTPS clones |
+### Storage options
 
-### Credential handling
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `storage.postgresConnectionString` | string | `""` | Standard Npgsql connection string (`Host=...;Database=...;Username=...;Password=...`). If empty, codekb skips DB wiring entirely — `codekb scan` will still walk the repo and emit records to the embedding pipeline, but nothing is persisted and `codekb ask` won't work. Must be supplied via env var in production; see [Credentials](#credentials). |
 
-- API keys, Git tokens, and connection strings **must** come from environment variables (or your OS keychain via env injection).
-- YAML files that contain a credential key (`gitToken`, `embeddingApiKey`, etc.) are rejected at load time.
-- SSH-URL clones delegate authentication to your existing `ssh-agent`.
+**How to use.** For local dev, set it in YAML (no real secret since Postgres runs on `localhost`). For shared environments, leave the field blank in YAML and set `CODEKB__STORAGE__POSTGRESCONNECTIONSTRING` in the deployment's secret store.
+
+### Embedding options
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `embedding.provider` | enum | `"openai"` | `"openai"` calls `api.openai.com`. `"azure"` calls your Azure OpenAI resource — requires `endpoint`. |
+| `embedding.model` | string | `"text-embedding-3-small"` | OpenAI: any embedding model. Azure: the deployment name. Common choices: `text-embedding-3-small` (1536-dim, cheap, good general quality), `text-embedding-3-large` (3072-dim, higher recall on niche identifiers). |
+| `embedding.modelVersion` | string | `"1"` | Free-form. Stored on every embedding row. Bump this when you change the embedding-text template or upgrade the model and want subsequent `codekb ask` calls to only see records from the new contract (controlled by `--include-other-models`). |
+| `embedding.dimension` | int | `1536` | **Must match the model's actual output dimension and the width of the `pgvector` column in your DB.** Mismatches cause INSERT failures. Set to `3072` for `text-embedding-3-large`. The pgvector column is created with this value at migration time, so changing it on an existing DB requires a fresh `code_embedding` table. |
+| `embedding.batchSize` | int | `256` | Records per embedding API call. Lower this if you hit per-request token limits on large code snippets. The OpenAI `text-embedding-3-*` cap is 2048 inputs per call but token budget binds first. |
+| `embedding.maxRetries` | int | `5` | Per-batch retries on 429/5xx. Set to `0` to fail fast in CI. |
+| `embedding.retryBackoffSeconds` | double | `2.0` | Exponential-backoff base. Wait is `retryBackoffSeconds * 2^attempt`. |
+| `embedding.apiKey` | string | none | **Do not put in YAML.** Set via `EMBEDDING_API_KEY` env var. Loading fails if `embeddingApiKey` appears in YAML. |
+| `embedding.endpoint` | string | none | Azure-only. Full URL of your Azure OpenAI resource (e.g. `https://my-resource.openai.azure.com/`). Set via `EMBEDDING_ENDPOINT`. |
+
+**Choosing a model.** `text-embedding-3-small` is the default because it is roughly 5× cheaper than `text-embedding-3-large` and matches it on most code-search benchmarks. Move to `text-embedding-3-large` (and set `dimension: 3072`) if you find that semantic search misses queries that share many sub-word tokens — that's the regime where the larger model pays for itself.
+
+**Choosing a batch size.** Start with `256`. If you see `400 Bad Request` from OpenAI with a token-budget message, halve it. If batches finish in well under a second, doubling is fine and reduces overall scan latency.
+
+### Scanner options
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `scanner.ignorePaths` | list&lt;string&gt; | `[bin, obj, .git, node_modules, packages]` | Substring matches against the relative path. Anything matching is skipped before classification. Add vendored-code directories here (e.g. `ThirdParty`, `external`) to avoid polluting embeddings. |
+| `scanner.parallelism` | int | `4` | Reserved for future parallel file-scan workers; the current scanner is single-threaded, so changing this has no effect today. Validation enforces `> 0`. |
+| `scanner.maxFileSizeKb` | int | `512` | Files larger than this are skipped silently. Bump this for monorepos with large generated config or seed files; reduce it to keep embedding cost predictable on a noisy repo. |
+
+### Environment variables
+
+Env wins over YAML when both are set.
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `EMBEDDING_API_KEY` | `embedding.apiKey` | Required for both providers. |
+| `EMBEDDING_ENDPOINT` | `embedding.endpoint` | Required for `provider: azure`. |
+| `EMBEDDING_MODEL` | `embedding.model` | |
+| `EMBEDDING_PROVIDER` | `embedding.provider` | |
+| `EMBEDDING_MODEL_DIMENSION` | `embedding.dimension` | Must parse as `int`; non-numeric values are silently ignored. |
+| `CODEKB__STORAGE__POSTGRESCONNECTIONSTRING` | `storage.postgresConnectionString` | The double-underscore mirrors the .NET `IConfiguration` convention. |
+| `CODEKB__EMBEDDING__APIKEY` | `embedding.apiKey` | Alternate spelling for the above. |
+| `CODEKB__EMBEDDING__ENDPOINT` | `embedding.endpoint` | |
+| `CODEKB__EMBEDDING__MODEL` | `embedding.model` | |
+| `CODEKB__EMBEDDING__PROVIDER` | `embedding.provider` | |
+| `CODEKB__EMBEDDING__DIMENSION` | `embedding.dimension` | |
+| `GIT_TOKEN` | Passed to LibGit2Sharp for private HTTPS clones | Treated as a PAT. |
+| `GIT_USERNAME` | Used with `GIT_TOKEN` | Defaults to `x-access-token` (works for GitHub fine-grained PATs). |
+
+`GIT_TOKEN`/`GIT_USERNAME` only affect `codekb scan --repo <https-url>`. SSH URLs (`git@github.com:org/repo.git`) ignore them entirely and authenticate through your existing `ssh-agent`.
+
+### Credentials
+
+API keys, Git tokens, and connection strings **must not** appear in the YAML file. `ConfigLoader` rejects any YAML containing the following keys (case-insensitive, matched as a line prefix outside of comments):
+
+- `gitToken`, `gitUsername`, `git.token`, `git.password`, `git.username`
+- `embeddingApiKey`, `embedding.apiKey`
+
+The check runs before YAML parsing, so a forbidden key fails the load with a clear error rather than being silently consumed.
+
+**Recommended deployment patterns:**
+
+- **Local dev** — `export EMBEDDING_API_KEY=sk-...` in your shell rc, or use [direnv](https://direnv.net/) to scope it per-project.
+- **CI** — store the key in GitHub Actions / GitLab CI secrets and inject as an environment variable on the scan job.
+- **Production** — mount from AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or HashiCorp Vault into env vars at process start.
+- **Never** commit a `.env` file containing real credentials, even if `.gitignore`'d — the file-scanning path treats `.env` values as opaque secrets and redacts them, but the source-of-truth file should still live in your secret store.
+
+### Validation
+
+After env overrides, `ConfigLoader.Validate` enforces:
+
+- `embedding.provider` non-empty
+- `embedding.model` non-empty
+- `embedding.dimension > 0`
+- `embedding.batchSize > 0`
+- `embedding.maxRetries >= 0`
+- `scanner.parallelism > 0`
+- `scanner.maxFileSizeKb > 0`
+
+A violation throws `ConfigLoadException`; the CLI surfaces it as exit code `2` (user error).
+
+### Cookbook
+
+**Minimal local-dev config** — uses the pgvector Docker container from the [Quickstart](#1--clone--build), default model, key from env:
+
+```yaml
+storage:
+  postgresConnectionString: "Host=localhost;Database=codekb;Username=postgres;Password=postgres"
+
+embedding:
+  provider: openai
+  model: text-embedding-3-small
+  dimension: 1536
+```
+
+```bash
+export EMBEDDING_API_KEY=sk-...
+codekb scan --path .
+```
+
+**Azure OpenAI** — endpoint required, model is the *deployment name*:
+
+```yaml
+embedding:
+  provider: azure
+  model: my-text-embed-3-small-deployment
+  dimension: 1536
+```
+
+```bash
+export EMBEDDING_API_KEY=...                                 # Azure API key
+export EMBEDDING_ENDPOINT="https://my-resource.openai.azure.com/"
+export CODEKB__STORAGE__POSTGRESCONNECTIONSTRING="Host=db.internal;Database=codekb;Username=codekb;Password=$DB_PASSWORD"
+codekb scan --repo https://github.com/example/service
+```
+
+**Larger model for higher recall** — note the dimension change; you'll need a fresh DB (or drop + re-migrate `code_embedding`):
+
+```yaml
+embedding:
+  provider: openai
+  model: text-embedding-3-large
+  dimension: 3072
+  batchSize: 128                     # large model has tighter token budgets
+  modelVersion: "2"                  # so old records are filtered out of ask results by default
+```
+
+**Restrictive scanner for a large monorepo** — adds vendored-code dirs to ignores and tightens the file-size cap:
+
+```yaml
+scanner:
+  ignorePaths: [bin, obj, .git, node_modules, packages, vendor, ThirdParty, .build]
+  maxFileSizeKb: 256
+```
+
+**Private repo over HTTPS:**
+
+```bash
+export GIT_TOKEN=ghp_...                # GitHub fine-grained PAT
+export GIT_USERNAME=x-access-token      # default; can be omitted
+codekb scan --repo https://github.com/private-org/private-repo
+```
+
+**Private repo over SSH** — `GIT_TOKEN` is irrelevant; uses your `ssh-agent`:
+
+```bash
+codekb scan --repo git@github.com:private-org/private-repo.git
+```
 
 ---
 
