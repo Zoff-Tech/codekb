@@ -9,6 +9,7 @@ using CodeKb.Scanner.Roslyn.Projects;
 using CodeKb.Scanner.Roslyn.Redaction;
 using CodeKb.Scanner.Roslyn.Syntax;
 using CodeKb.Storage.Postgres;
+using CodeKb.Storage.Postgres.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -37,6 +38,12 @@ public static class CompositionRoot
             services.AddSingleton<IRepositoryStore>(sp => new PostgresRepositoryStore(sp.GetRequiredService<NpgsqlDataSource>()));
             services.AddSingleton<IScanJobStore>(sp => new PostgresScanJobStore(sp.GetRequiredService<NpgsqlDataSource>()));
             services.AddSingleton<ICodeRecordStore>(sp => new PostgresCodeRecordStore(sp.GetRequiredService<NpgsqlDataSource>()));
+            services.AddSingleton<IDatabaseInitializer>(_ => new MigrationRunner(
+                options.Storage.PostgresConnectionString, options.Embedding.Dimension));
+        }
+        else
+        {
+            services.AddSingleton<IDatabaseInitializer, NullDatabaseInitializer>();
         }
 
         services.AddSingleton<HttpClient>();

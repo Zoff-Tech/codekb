@@ -5,15 +5,32 @@ namespace CodeKb.Storage.Postgres.Migrations;
 
 public sealed record Migration(string Name, string Sql);
 
-public sealed class MigrationRunner
+public interface IDatabaseInitializer
+{
+    Task InitializeAsync(CancellationToken ct);
+}
+
+public sealed class NullDatabaseInitializer : IDatabaseInitializer
+{
+    public Task InitializeAsync(CancellationToken ct) => Task.CompletedTask;
+}
+
+public sealed class MigrationRunner : IDatabaseInitializer
 {
     private readonly string _connectionString;
     private readonly int _dimension;
+    private int _initialized;
 
     public MigrationRunner(string connectionString, int dimension)
     {
         _connectionString = connectionString;
         _dimension = dimension;
+    }
+
+    public Task InitializeAsync(CancellationToken ct)
+    {
+        if (Interlocked.Exchange(ref _initialized, 1) == 1) return Task.CompletedTask;
+        return RunAsync(ct);
     }
 
     public static IReadOnlyList<Migration> LoadEmbedded(int dimension)

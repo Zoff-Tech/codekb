@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Database migrations now run automatically on `codekb scan`.** A new
+  `IDatabaseInitializer` is injected into `ScanService` and invoked before
+  any store operation. With Postgres configured, it resolves to
+  `MigrationRunner`, which applies the embedded `001_init.sql` and
+  `002_indexes.sql` exactly once per process (tracked in a `_migrations`
+  table; subsequent scans are no-ops). When no connection string is
+  configured, a `NullDatabaseInitializer` is used. Previously the
+  `MigrationRunner` existed but had no production call sites, so users
+  had to apply the SQL manually against a fresh database.
+
 ### Removed
 
 - **Dedicated feature-flag feature.** Removed the `FeatureFlagDetector`, the

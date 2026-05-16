@@ -4,6 +4,7 @@ using CodeKb.Core.Configuration;
 using CodeKb.Embedding;
 using CodeKb.Scanner.Roslyn;
 using CodeKb.Storage.Postgres;
+using CodeKb.Storage.Postgres.Migrations;
 using Microsoft.Extensions.Logging;
 
 namespace CodeKb.Core.Services;
@@ -17,6 +18,7 @@ public sealed class ScanService : IScanService
     private readonly IScanJobStore _jobStore;
     private readonly ICodeRecordStore _recordStore;
     private readonly EmbeddingPipeline _embedding;
+    private readonly IDatabaseInitializer _initializer;
     private readonly ILogger<ScanService> _logger;
 
     public ScanService(
@@ -27,6 +29,7 @@ public sealed class ScanService : IScanService
         IScanJobStore jobStore,
         ICodeRecordStore recordStore,
         EmbeddingPipeline embedding,
+        IDatabaseInitializer initializer,
         ILogger<ScanService> logger)
     {
         _options = options;
@@ -36,6 +39,7 @@ public sealed class ScanService : IScanService
         _jobStore = jobStore;
         _recordStore = recordStore;
         _embedding = embedding;
+        _initializer = initializer;
         _logger = logger;
     }
 
@@ -43,6 +47,8 @@ public sealed class ScanService : IScanService
     {
         request.Validate();
         var sw = Stopwatch.StartNew();
+
+        await _initializer.InitializeAsync(ct);
 
         var loaded = await _loader.LoadAsync(
             new RepoSource(request.RepoUrl, request.Path, request.Branch), ct);

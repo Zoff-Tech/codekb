@@ -52,6 +52,8 @@ docker run -d --name codekb-pg \
   pgvector/pgvector:pg16
 ```
 
+No manual schema setup needed — codekb embeds its SQL migrations and applies them on the first `codekb scan` against a fresh database. The migrations are tracked in a `_migrations` table, so subsequent scans skip work that's already been done.
+
 ### 3 — configure
 
 Create `config/codekb.yaml`:

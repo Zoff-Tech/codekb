@@ -2,6 +2,7 @@ using CodeKb.Contracts;
 using CodeKb.Core.Configuration;
 using CodeKb.Core.Services;
 using CodeKb.Embedding;
+using CodeKb.Storage.Postgres.Migrations;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -27,7 +28,7 @@ public class ScanServiceTests
         var records = new FakeCodeRecordStore();
         var emb = new FakeEmbeddingClient();
         var pipeline = new EmbeddingPipeline(emb, new RetryPolicy(0, 0, sleep: (_, _) => Task.CompletedTask), 10);
-        var svc = new ScanService(options, loader, scanner, repos, jobs, records, pipeline, NullLogger<ScanService>.Instance);
+        var svc = new ScanService(options, loader, scanner, repos, jobs, records, pipeline, new NullDatabaseInitializer(), NullLogger<ScanService>.Instance);
         return (svc, scanner, repos, jobs, records, emb);
     }
 
@@ -89,7 +90,7 @@ public class ScanServiceTests
         var records = new FakeCodeRecordStore();
         var emb = new FakeEmbeddingClient { Responder = _ => throw new EmbeddingException("err") };
         var pipeline = new EmbeddingPipeline(emb, new RetryPolicy(0, 0, sleep: (_, _) => Task.CompletedTask), 10);
-        var svc = new ScanService(options, loader, scanner, repos, jobs, records, pipeline, NullLogger<ScanService>.Instance);
+        var svc = new ScanService(options, loader, scanner, repos, jobs, records, pipeline, new NullDatabaseInitializer(), NullLogger<ScanService>.Instance);
 
         await svc.ScanAsync(new ScanRequest { Path = "/repo" }, CancellationToken.None);
         records.FailedEmbeddings.Should().HaveCount(1);
@@ -102,5 +103,26 @@ public class ScanServiceTests
         var (svc, _, _, _, _, _) = Build();
         await Assert.ThrowsAsync<ArgumentException>(() =>
             svc.ScanAsync(new ScanRequest(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ScanAsync_InvokesDatabaseInitializer_BeforeStoreOps()
+    {
+        var options = new CodeKbOptions();
+        var loader = new FakeRepositoryLoader();
+        var scanner = new FakeScanner { Records = { NewRecord() } };
+        var initializer = new RecordingDatabaseInitializer();
+        var repos = new FakeRepositoryStore();
+        var jobs = new FakeScanJobStore();
+        var records = new FakeCodeRecordStore();
+        var emb = new FakeEmbeddingClient();
+        var pipeline = new EmbeddingPipeline(emb, new RetryPolicy(0, 0, sleep: (_, _) => Task.CompletedTask), 10);
+        var svc = new ScanService(options, loader, scanner, repos, jobs, records, pipeline, initializer, NullLogger<ScanService>.Instance);
+
+        await svc.ScanAsync(new ScanRequest { Path = "/repo" }, CancellationToken.None);
+
+        initializer.Invocations.Should().Be(1);
+        repos.ByName.Should().NotBeEmpty();
+        initializer.FirstCalledAt.Should().NotBeNull();
     }
 }

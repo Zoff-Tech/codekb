@@ -45,4 +45,12 @@ public class MigrationRunnerTests
         idx.Sql.Should().Contain("code_record_unique_idx");
         idx.Sql.Should().Contain("hnsw");
     }
+
+    [Fact]
+    public void NullDatabaseInitializer_IsNoOp()
+    {
+        var init = new NullDatabaseInitializer();
+        var task = init.InitializeAsync(CancellationToken.None);
+        task.IsCompletedSuccessfully.Should().BeTrue();
+    }
 }

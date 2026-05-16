@@ -2,8 +2,21 @@ using CodeKb.Contracts;
 using CodeKb.Embedding;
 using CodeKb.Scanner.Roslyn;
 using CodeKb.Storage.Postgres;
+using CodeKb.Storage.Postgres.Migrations;
 
 namespace CodeKb.Core.Tests;
+
+internal sealed class RecordingDatabaseInitializer : IDatabaseInitializer
+{
+    public int Invocations { get; private set; }
+    public DateTimeOffset? FirstCalledAt { get; private set; }
+    public Task InitializeAsync(CancellationToken ct)
+    {
+        Invocations++;
+        FirstCalledAt ??= DateTimeOffset.UtcNow;
+        return Task.CompletedTask;
+    }
+}
 
 internal sealed class FakeRepositoryLoader : IRepositoryLoader
 {
